@@ -1,18 +1,59 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { FileUploader } from './components/FileUploader';
 import { ResultViewer } from './components/ResultViewer';
-import { editImageWithGemini } from './services/geminiService';
-import { Briefcase, Wand2, User, Sparkles, Send } from 'lucide-react';
+import { generateComicWithGemini } from './services/geminiService';
+import { Palette, Sparkles, Send, LayoutGrid, KeyRound, MessageSquareText } from 'lucide-react';
 
-const SUIT_PROMPT = "Identify the person in this image. Change their outfit to a stylish, well-fitted professional business suit. Choose a modern suit style that fits the person's pose perfectly. Keep the background, face, and lighting exactly consistent with the original image.";
+const COMIC_STYLES = [
+  { id: 'manga', label: 'Manga / Anime', desc: 'Black & white, dynamic lines' },
+  { id: 'superhero', label: 'US Superhero', desc: 'Bold colors, dramatic shading' },
+  { id: 'cartoon', label: 'Sunday Cartoon', desc: 'Flat colors, playful style' },
+  { id: 'sketch', label: 'Hand Drawn', desc: 'Pencil sketch aesthetic' },
+  { id: 'pixel', label: 'Pixel Art', desc: 'Retro 8-bit game style' },
+  { id: 'noir', label: 'Film Noir', desc: 'Dark, moody, high contrast' },
+];
 
 export default function App() {
+  const [hasApiKey, setHasApiKey] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [customPrompt, setCustomPrompt] = useState("");
-  const [isSuitMode, setIsSuitMode] = useState(true);
+  const [storyHint, setStoryHint] = useState("");
+  const [selectedStyle, setSelectedStyle] = useState(COMIC_STYLES[0].id);
   const [isLoading, setIsLoading] = useState(false);
   const [resultImage, setResultImage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    checkApiKey();
+  }, []);
+
+  const checkApiKey = async () => {
+    try {
+      const aistudio = (window as any).aistudio;
+      if (aistudio && aistudio.hasSelectedApiKey) {
+        const hasKey = await aistudio.hasSelectedApiKey();
+        setHasApiKey(hasKey);
+      } else {
+        // Fallback for dev environments without the AI Studio wrapper
+        setHasApiKey(true);
+      }
+    } catch (e) {
+      console.error("Error checking API key:", e);
+      setHasApiKey(false);
+    }
+  };
+
+  const handleSelectKey = async () => {
+    try {
+      const aistudio = (window as any).aistudio;
+      if (aistudio && aistudio.openSelectKey) {
+        await aistudio.openSelectKey();
+        // Assume success after dialog closes (race condition mitigation)
+        setHasApiKey(true);
+      }
+    } catch (e) {
+      console.error("Error selecting API key:", e);
+    }
+  };
 
   const handleFileSelect = (file: File) => {
     setSelectedFile(file);
@@ -24,7 +65,7 @@ export default function App() {
     setSelectedFile(null);
     setResultImage(null);
     setError(null);
-    setCustomPrompt("");
+    setStoryHint("");
   };
 
   const fileToBase64 = (file: File): Promise<string> => {
@@ -33,7 +74,7 @@ export default function App() {
       reader.readAsDataURL(file);
       reader.onload = () => {
         const result = reader.result as string;
-        // Remove data URL prefix (e.g., "data:image/jpeg;base64,")
+        // Remove data URL prefix
         const base64Data = result.split(',')[1];
         resolve(base64Data);
       };
@@ -52,26 +93,33 @@ export default function App() {
       const base64Data = await fileToBase64(selectedFile);
       const mimeType = selectedFile.type;
       
-      // Use the suit prompt if in suit mode, otherwise use the custom prompt
-      // If custom prompt is empty in custom mode, default to a generic "enhance" prompt
-      const finalPrompt = isSuitMode 
-        ? SUIT_PROMPT 
-        : (customPrompt || "Enhance the quality of this image and make it look professional.");
+      const styleLabel = COMIC_STYLES.find(s => s.id === selectedStyle)?.label || "Comic Book";
+      const finalPrompt = storyHint.trim() 
+        ? storyHint 
+        : "A funny and interesting sequence of events involving the main character.";
 
-      const generatedImageBase64 = await editImageWithGemini(
+      const generatedImageBase64 = await generateComicWithGemini(
         base64Data, 
         mimeType, 
-        finalPrompt
+        finalPrompt,
+        styleLabel
       );
 
       if (generatedImageBase64) {
         setResultImage(generatedImageBase64);
       } else {
-        setError("Failed to generate image. Please try again.");
+        // If failed, it might be an auth issue, let's reset key state just in case, 
+        // but showing error message is better UX than forcefully logging out.
+        setError("Failed to generate comic. Please try again.");
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setError("An error occurred during generation. Please check your connection and try again.");
+      if (err.message && err.message.includes("Requested entity was not found")) {
+        setHasApiKey(false); // Reset key state to force re-selection
+        setError("API Key issue detected. Please select your key again.");
+      } else {
+        setError("An error occurred during generation. Please check your connection.");
+      }
     } finally {
       setIsLoading(false);
     }
@@ -81,29 +129,63 @@ export default function App() {
     if (resultImage) {
       const link = document.createElement('a');
       link.href = resultImage;
-      link.download = `suitup-ai-${Date.now()}.png`;
+      link.download = `comic-strip-${Date.now()}.png`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
     }
   };
 
+  // API Key Selection Screen
+  if (!hasApiKey) {
+    return (
+      <div className="min-h-screen bg-[#0f172a] text-slate-200 flex flex-col items-center justify-center p-4">
+        <div className="max-w-md w-full text-center space-y-8">
+          <div className="inline-flex items-center justify-center p-4 bg-yellow-500/10 rounded-full mb-4">
+            <LayoutGrid size={64} className="text-yellow-400" />
+          </div>
+          <h1 className="text-4xl md:text-5xl font-bold text-white comic-font tracking-wide">
+            ComicStrip <span className="text-yellow-400">AI</span>
+          </h1>
+          <p className="text-slate-400 text-lg">
+            To create high-quality comics with Gemini 3 Pro (Nano Banana Pro), you need to select a paid API key.
+          </p>
+          <div className="bg-slate-800/50 p-6 rounded-2xl border border-slate-700">
+            <button
+              onClick={handleSelectKey}
+              className="w-full py-4 px-6 bg-yellow-500 hover:bg-yellow-400 text-slate-900 font-bold text-lg rounded-xl flex items-center justify-center gap-3 transition-all transform hover:scale-[1.02] shadow-lg"
+            >
+              <KeyRound size={24} />
+              Connect API Key
+            </button>
+            <p className="mt-4 text-xs text-slate-500">
+              Check billing details at <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noreferrer" className="text-yellow-500 hover:underline">ai.google.dev</a>
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Main App
   return (
-    <div className="min-h-screen bg-[#0f172a] text-slate-200 selection:bg-indigo-500/30 pb-20">
+    <div className="min-h-screen bg-[#0f172a] text-slate-200 selection:bg-yellow-500/30 pb-20">
       
       {/* Header */}
-      <header className="sticky top-0 z-50 border-b border-white/5 bg-[#0f172a]/80 backdrop-blur-md">
+      <header className="sticky top-0 z-50 border-b border-white/5 bg-[#0f172a]/95 backdrop-blur-md">
         <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-2 rounded-lg">
-              <Briefcase size={20} className="text-white" />
+            <div className="bg-gradient-to-br from-yellow-400 to-orange-500 p-2 rounded-lg">
+              <LayoutGrid size={20} className="text-slate-900" />
             </div>
-            <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">
-              SuitUp <span className="font-light">AI</span>
+            <h1 className="text-xl font-bold comic-font tracking-wide text-white">
+              ComicStrip <span className="text-yellow-400">AI</span>
             </h1>
           </div>
-          <div className="text-xs font-medium px-3 py-1 rounded-full bg-slate-800 border border-slate-700 text-slate-400 hidden sm:block">
-            Powered by Gemini 2.5
+          <div className="flex items-center gap-3">
+             <div className="text-xs font-bold px-3 py-1 rounded-full bg-slate-800 border border-slate-700 text-yellow-400 hidden sm:block">
+              Gemini 3 Pro
+            </div>
           </div>
         </div>
       </header>
@@ -112,11 +194,11 @@ export default function App() {
         
         {/* Intro */}
         <div className="text-center mb-10 space-y-4">
-          <h2 className="text-4xl md:text-5xl font-bold text-white tracking-tight">
-            Dress for success, <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">instantly.</span>
+          <h2 className="text-4xl md:text-5xl font-bold text-white comic-font tracking-wider">
+            Turn your life into a <span className="text-yellow-400 decoration-wavy underline decoration-yellow-400/30">Comic Strip</span>
           </h2>
           <p className="text-lg text-slate-400 max-w-2xl mx-auto">
-            Upload your photo and let our AI tailor fit a professional suit for you in seconds. Or use custom prompts to edit your photos creatively.
+            Upload a photo, choose a style, and let AI generate a hilarious 4-panel comic story instantly.
           </p>
         </div>
 
@@ -125,11 +207,12 @@ export default function App() {
           {/* Left Column: Input & Controls */}
           <div className="space-y-6">
             
+            {/* 1. Upload */}
             <div className="bg-slate-800/50 border border-slate-700 rounded-3xl p-6 shadow-xl backdrop-blur-sm">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-white flex items-center gap-2">
-                  <User size={18} className="text-indigo-400" />
-                  Source Image
+                <h3 className="text-lg font-bold text-white flex items-center gap-2 comic-font">
+                  <div className="bg-slate-700 w-6 h-6 rounded-full flex items-center justify-center text-xs">1</div>
+                  Upload Character/Scene
                 </h3>
               </div>
               <FileUploader 
@@ -139,98 +222,91 @@ export default function App() {
               />
             </div>
 
-            {/* Controls */}
-            <div className={`bg-slate-800/50 border border-slate-700 rounded-3xl p-6 shadow-xl backdrop-blur-sm transition-opacity duration-300 ${!selectedFile ? 'opacity-50 pointer-events-none grayscale' : 'opacity-100'}`}>
-              <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                <Wand2 size={18} className="text-purple-400" />
-                Styling Options
+            {/* 2. Controls */}
+            <div className={`bg-slate-800/50 border border-slate-700 rounded-3xl p-6 shadow-xl backdrop-blur-sm transition-all duration-300 ${!selectedFile ? 'opacity-60 pointer-events-none grayscale' : 'opacity-100'}`}>
+              <h3 className="text-lg font-bold text-white mb-6 flex items-center gap-2 comic-font">
+                <div className="bg-slate-700 w-6 h-6 rounded-full flex items-center justify-center text-xs">2</div>
+                Creative Direction
               </h3>
 
-              <div className="flex gap-2 p-1 bg-slate-900 rounded-xl mb-6">
-                <button
-                  onClick={() => setIsSuitMode(true)}
-                  className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-lg text-sm font-medium transition-all ${
-                    isSuitMode 
-                      ? 'bg-indigo-600 text-white shadow-lg' 
-                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
-                  }`}
-                >
-                  <Briefcase size={16} />
-                  Suit Up (Auto)
-                </button>
-                <button
-                  onClick={() => setIsSuitMode(false)}
-                  className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-lg text-sm font-medium transition-all ${
-                    !isSuitMode 
-                      ? 'bg-purple-600 text-white shadow-lg' 
-                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
-                  }`}
-                >
-                  <Sparkles size={16} />
-                  Custom Edit
-                </button>
+              {/* Style Selector */}
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-slate-400 mb-3 flex items-center gap-2">
+                  <Palette size={16} /> Choose Art Style
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {COMIC_STYLES.map((style) => (
+                    <button
+                      key={style.id}
+                      onClick={() => setSelectedStyle(style.id)}
+                      className={`
+                        p-3 rounded-xl border text-left transition-all
+                        ${selectedStyle === style.id 
+                          ? 'bg-yellow-500/10 border-yellow-500/50 ring-1 ring-yellow-500/50' 
+                          : 'bg-slate-900 border-slate-700 hover:border-slate-600'}
+                      `}
+                    >
+                      <div className={`font-bold text-sm ${selectedStyle === style.id ? 'text-yellow-400' : 'text-slate-200'}`}>
+                        {style.label}
+                      </div>
+                      <div className="text-[10px] text-slate-500 mt-1 truncate">
+                        {style.desc}
+                      </div>
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              <div className="space-y-4">
-                {isSuitMode ? (
-                  <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-xl p-4 text-sm text-indigo-200">
-                    <p className="flex gap-2">
-                      <span className="font-bold">AI Instruction:</span>
-                      "Find the person. Replace clothing with a professional fitted business suit. Maintain face and background."
-                    </p>
-                  </div>
+              {/* Story Hint */}
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-slate-400 mb-3 flex items-center gap-2">
+                  <MessageSquareText size={16} /> Story Hint (Optional)
+                </label>
+                <textarea
+                  value={storyHint}
+                  onChange={(e) => setStoryHint(e.target.value)}
+                  placeholder="E.g., The cat plans world domination, but gets distracted by a laser pointer..."
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-4 text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-yellow-500/50 resize-none h-24 text-sm"
+                />
+              </div>
+
+              {/* Generate Button */}
+              <button
+                onClick={handleGenerate}
+                disabled={isLoading || !selectedFile}
+                className={`
+                  w-full py-4 px-6 rounded-xl font-bold text-lg flex items-center justify-center gap-3 transition-all shadow-lg
+                  ${isLoading 
+                    ? 'bg-slate-700 text-slate-400 cursor-not-allowed' 
+                    : 'bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-400 hover:to-orange-400 text-slate-900 transform hover:scale-[1.02]'
+                  }
+                `}
+              >
+                {isLoading ? (
+                  <>Processing...</>
                 ) : (
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">
-                      Describe your edit
-                    </label>
-                    <textarea
-                      value={customPrompt}
-                      onChange={(e) => setCustomPrompt(e.target.value)}
-                      placeholder="E.g., Change the background to a beach, Add a retro filter, Remove the glasses..."
-                      className="w-full bg-slate-900 border border-slate-700 rounded-xl p-4 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none h-32"
-                    />
-                  </div>
+                  <>
+                    <Sparkles size={20} />
+                    Generate Comic Strip
+                  </>
                 )}
-
-                <button
-                  onClick={handleGenerate}
-                  disabled={isLoading || !selectedFile}
-                  className={`
-                    w-full py-4 px-6 rounded-xl font-bold text-lg flex items-center justify-center gap-3 transition-all shadow-lg
-                    ${isLoading 
-                      ? 'bg-slate-700 text-slate-400 cursor-not-allowed' 
-                      : isSuitMode
-                        ? 'bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white transform hover:scale-[1.02]'
-                        : 'bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-500 hover:to-purple-400 text-white transform hover:scale-[1.02]'
-                    }
-                  `}
-                >
-                  {isLoading ? (
-                    <>Processing...</>
-                  ) : (
-                    <>
-                      {isSuitMode ? <Briefcase size={20} /> : <Send size={20} />}
-                      {isSuitMode ? 'Generate Business Look' : 'Apply Custom Edit'}
-                    </>
-                  )}
-                </button>
-                {error && (
-                  <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm text-center">
-                    {error}
-                  </div>
-                )}
-              </div>
+              </button>
+              
+              {error && (
+                <div className="mt-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm text-center">
+                  {error}
+                </div>
+              )}
             </div>
 
           </div>
 
           {/* Right Column: Result */}
           <div className="lg:sticky lg:top-24 space-y-6">
-            <div className="bg-slate-800/50 border border-slate-700 rounded-3xl p-6 shadow-xl backdrop-blur-sm h-full">
-              <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                <Sparkles size={18} className="text-yellow-400" />
-                AI Transformation
+            <div className="bg-slate-800/50 border border-slate-700 rounded-3xl p-6 shadow-xl backdrop-blur-sm h-full flex flex-col">
+              <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2 comic-font">
+                <LayoutGrid size={18} className="text-yellow-400" />
+                Your Comic
               </h3>
               <ResultViewer 
                 isLoading={isLoading} 
@@ -239,16 +315,10 @@ export default function App() {
               />
               
               {!resultImage && !isLoading && (
-                 <div className="mt-6 grid grid-cols-3 gap-2 text-center text-xs text-slate-500">
-                    <div className="p-2 rounded-lg bg-slate-900/50 border border-slate-800">
-                      High Quality
-                    </div>
-                    <div className="p-2 rounded-lg bg-slate-900/50 border border-slate-800">
-                      Privacy First
-                    </div>
-                    <div className="p-2 rounded-lg bg-slate-900/50 border border-slate-800">
-                      Fast Process
-                    </div>
+                 <div className="mt-6 text-center space-y-2">
+                    <p className="text-slate-500 text-sm">
+                      Pro Tip: Try the <span className="text-yellow-500">Manga</span> style for dramatic effects!
+                    </p>
                  </div>
               )}
             </div>

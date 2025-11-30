@@ -1,5 +1,5 @@
 {
-  "name": "SuitUp AI - Virtual Stylist",
-  "description": "Transform your look instantly using Gemini 2.5 Flash Image. Upload a photo to try on professional suits or use custom prompts to edit your images with AI precision.",
+  "name": "ComicStrip AI - 4-Panel Generator",
+  "description": "Turn your photos into hilarious 4-panel comics using Gemini 3 Pro (Nano Banana Pro). Choose your style and let AI tell the story.",
   "requestFramePermissions": []
 }
